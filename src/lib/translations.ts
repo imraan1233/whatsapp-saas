@@ -1,0 +1,47 @@
+export const translations = {
+  en: {
+    dashboard: 'Dashboard',
+    knowledgeBase: 'Knowledge Base',
+    testChat: 'Test Chat',
+    settings: 'Settings',
+    logout: 'Logout',
+    activeAgents: 'Active Agents',
+    messagesToday: 'Messages Today',
+    subscription: 'Subscription',
+    freeTrial: 'Free Trial',
+    agentStatus: 'Agent Status',
+    readyToConfigure: 'Your AI agent is ready to be configured.',
+    goToKnowledge: 'Go to the Knowledge Base section to add your website URL and train your AI.',
+  },
+  ar: {
+    dashboard: 'لوحة القيادة',
+    knowledgeBase: 'قاعدة المعرفة',
+    testChat: 'محادثة تجريبية',
+    settings: 'الإعدادات',
+    logout: 'تسجيل الخروج',
+    activeAgents: 'الوكلاء النشطون',
+    messagesToday: 'رسائل اليوم',
+    subscription: 'الاشتراك',
+    freeTrial: 'تجربة مجانية',
+    agentStatus: 'حالة الوكيل',
+    readyToConfigure: 'وكيل الذكاء الاصطناعي الخاص بك جاهز للتكوين.',
+    goToKnowledge: 'انتقل إلى قسم قاعدة المعرفة لإضافة عنوان موقعك وتدريب الذكاء الاصطناعي.',
+  },
+  es: {
+    dashboard: 'Tablero',
+    knowledgeBase: 'Base de Conocimiento',
+    testChat: 'Chat de Prueba',
+    settings: 'Configuración',
+    logout: 'Cerrar Sesión',
+    activeAgents: 'Agentes Activos',
+    messagesToday: 'Mensajes Hoy',
+    subscription: 'Suscripción',
+    freeTrial: 'Prueba Gratuita',
+    agentStatus: 'Estado del Agente',
+    readyToConfigure: 'Tu agente de IA está listo para ser configurado.',
+    goToKnowledge: 'Ve a la sección de Base de Conocimiento para agregar tu URL y entrenar tu IA.',
+  },
+  // You can add French, German, Chinese, Urdu here later!
+}
+
+export type Language = keyof typeof translations;
