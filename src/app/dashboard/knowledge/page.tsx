@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 
 export default function KnowledgeBasePage() {
   const [url, setUrl] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [manualText, setManualText] = useState('')
   const [isTraining, setIsTraining] = useState(false)
   const [status, setStatus] = useState('')
@@ -14,7 +15,6 @@ export default function KnowledgeBasePage() {
   const supabase = createClient()
   const router = useRouter()
 
-  // 1. Load the user's agent ID when the page opens
   useEffect(() => {
     const loadAgent = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -36,9 +36,19 @@ export default function KnowledgeBasePage() {
     loadAgent()
   }, [router, supabase])
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFiles(Array.from(e.target.files))
+    }
+  }
+
+  const removeFile = (index: number) => {
+    setFiles(files.filter((_, i) => i !== index))
+  }
+
   const handleTrain = async () => {
-    if (!url && !manualText) {
-      setStatus('⚠️ Please add at least a website URL or manual text.')
+    if (!url && files.length === 0 && !manualText) {
+      setStatus('⚠️ Please add at least one source of information.')
       return
     }
     
@@ -48,11 +58,11 @@ export default function KnowledgeBasePage() {
     }
 
     setIsTraining(true)
-    setStatus('Scanning your website and saving to database... (This may take a few seconds)')
+    setStatus('Processing your knowledge base...')
     
     let scrapedText = ''
 
-    // 2. Scrape the website using Jina Reader
+    // 1. Scrape website if URL provided
     if (url) {
       try {
         const cleanUrl = url.startsWith('http') ? url : `https://${url}`
@@ -64,16 +74,22 @@ export default function KnowledgeBasePage() {
       }
     }
 
-    // 3. Save directly to Supabase Database!
+    // 2. For now, we'll note that files were uploaded (PDF processing coming next)
+    let fileNote = ''
+    if (files.length > 0) {
+      fileNote = `\n\nUPLOADED FILES: ${files.map(f => f.name).join(', ')}\n(Note: PDF processing will be implemented next)`
+    }
+
+    // 3. Save to Supabase
     const { error } = await supabase
       .from('knowledge_bases')
       .upsert({
         agent_id: agentId,
-        website_url: url,
-        scraped_text: scrapedText,
-        manual_text: manualText,
+        website_url: url || null,
+        scraped_text: scrapedText || null,
+        manual_text: manualText + fileNote || null,
       }, {
-        onConflict: 'agent_id' // Updates existing record instead of creating duplicates
+        onConflict: 'agent_id'
       })
 
     setIsTraining(false)
@@ -81,7 +97,7 @@ export default function KnowledgeBasePage() {
     if (error) {
       setStatus('❌ Error saving to database: ' + error.message)
     } else {
-      setStatus('✅ Success! Your AI agent has learned your business data and is ready for WhatsApp.')
+      setStatus('✅ Success! Your AI agent has learned your business data.')
     }
   }
 
@@ -110,13 +126,48 @@ export default function KnowledgeBasePage() {
           <div className="h-px bg-gray-300 flex-1"></div>
         </div>
 
-        {/* Option 2: Manual Text */}
+        {/* Option 2: File Upload */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Option 2: Describe Your Business / Prices / Hours</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Option 2: Upload Documents (PDF, TXT)</label>
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-gray-50 transition">
+            <input 
+              type="file" 
+              id="file-upload" 
+              className="hidden" 
+              multiple 
+              accept=".pdf,.txt,.doc,.docx"
+              onChange={handleFileChange} 
+            />
+            <label htmlFor="file-upload" className="cursor-pointer block">
+              <p className="text-blue-600 font-semibold"> Click to upload files</p>
+              <p className="text-xs text-gray-400 mt-1">PDF, TXT, DOC, DOCX supported</p>
+            </label>
+          </div>
+          {files.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {files.map((file, index) => (
+                <div key={index} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+                  <span className="text-sm text-gray-700 truncate flex-1">{file.name}</span>
+                  <button onClick={() => removeFile(index)} className="ml-4 text-red-600 text-sm font-medium">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center space-x-4">
+          <div className="h-px bg-gray-300 flex-1"></div>
+          <span className="text-gray-400 text-sm">AND / OR</span>
+          <div className="h-px bg-gray-300 flex-1"></div>
+        </div>
+
+        {/* Option 3: Manual Text */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Option 3: Describe Your Business / Prices / Hours</label>
           <textarea 
             value={manualText}
             onChange={(e) => setManualText(e.target.value)}
-            placeholder="Example: We are open 9am-5pm. We charge $50 for repairs. We sell Benoxyl Cream."
+            placeholder="Example: We are open 9am-5pm. We charge $50 for repairs. We sell Benoxyl Cream, Skin-A Cream, etc."
             rows={6}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none"
           />
@@ -133,7 +184,7 @@ export default function KnowledgeBasePage() {
         </button>
 
         {status && (
-          <div className={`p-4 rounded-lg ${status.includes('Success') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
+          <div className={`p-4 rounded-lg ${status.includes('Success') ? 'bg-green-50 text-green-700' : status.includes('⚠️') ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
             {status}
           </div>
         )}
