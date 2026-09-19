@@ -53,7 +53,7 @@ export default function KnowledgeBasePage() {
     }
     
     if (!agentId) {
-      setStatus('⚠️ Could not find your agent. Please try logging in again.')
+      setStatus('️ Could not find your agent. Please try logging in again.')
       return
     }
 
@@ -80,17 +80,40 @@ export default function KnowledgeBasePage() {
       fileNote = `\n\nUPLOADED FILES: ${files.map(f => f.name).join(', ')}\n(Note: PDF processing will be implemented next)`
     }
 
-    // 3. Save to Supabase
-    const { error } = await supabase
+    // 3. Check if knowledge base already exists for this agent
+    const { data: existing } = await supabase
       .from('knowledge_bases')
-      .upsert({
-        agent_id: agentId,
-        website_url: url || null,
-        scraped_text: scrapedText || null,
-        manual_text: manualText + fileNote || null,
-      }, {
-        onConflict: 'agent_id'
-      })
+      .select('id')
+      .eq('agent_id', agentId)
+      .single()
+
+    let error
+
+    if (existing) {
+      // Update existing record
+      const { error: updateError } = await supabase
+        .from('knowledge_bases')
+        .update({
+          website_url: url || null,
+          scraped_text: scrapedText || null,
+          manual_text: manualText + fileNote || null,
+        })
+        .eq('agent_id', agentId)
+      
+      error = updateError
+    } else {
+      // Insert new record
+      const { error: insertError } = await supabase
+        .from('knowledge_bases')
+        .insert({
+          agent_id: agentId,
+          website_url: url || null,
+          scraped_text: scrapedText || null,
+          manual_text: manualText + fileNote || null,
+        })
+      
+      error = insertError
+    }
 
     setIsTraining(false)
 
