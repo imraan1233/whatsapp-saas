@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
     console.log('Meta verification:', { mode, token, challenge })
 
-    if (mode === 'subscribe' && token === 'my_saas_secret_123') {
+    if (mode === 'subscribe' && token === 'my_saas_secret_1234') {
       console.log('✅ Verification successful!')
       // Return ONLY the challenge string, nothing else
       return new Response(challenge, {
