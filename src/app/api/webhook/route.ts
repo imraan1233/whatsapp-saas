@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient } from '@supabase/supabase-js'
 
@@ -13,26 +13,32 @@ const openai = new OpenAI({
 })
 
 // GET Request: Meta uses this to verify your webhook URL
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const mode = searchParams.get('hub.mode')
-  const token = searchParams.get('hub.verify_token')
-  const challenge = searchParams.get('hub.challenge')
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams
+    const mode = searchParams.get('hub.mode')
+    const token = searchParams.get('hub.verify_token')
+    const challenge = searchParams.get('hub.challenge')
 
-  console.log('Webhook verification attempt:', { mode, token })
+    console.log('Meta verification:', { mode, token, challenge })
 
-  // Check if the token matches
-  if (mode === 'subscribe' && token === 'my_saas_secret_123') {
-    console.log('Webhook verified successfully!')
-    // Return the challenge string back to Meta
-    return new NextResponse(challenge, { 
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' }
-    })
+    if (mode === 'subscribe' && token === 'my_saas_secret_123') {
+      console.log('✅ Verification successful!')
+      // Return ONLY the challenge string, nothing else
+      return new Response(challenge, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+      })
+    }
+
+    console.log('❌ Verification failed')
+    return new Response('Forbidden', { status: 403 })
+  } catch (error) {
+    console.error('Verification error:', error)
+    return new Response('Error', { status: 500 })
   }
-  
-  console.log('Webhook verification failed - token mismatch')
-  return new NextResponse('Forbidden', { status: 403 })
 }
 
 // POST Request: Meta sends this when a customer messages your WhatsApp
@@ -47,20 +53,20 @@ export async function POST(request: Request) {
     const value = change?.value
     
     if (!value?.messages) {
-      return new NextResponse('No messages', { status: 200 }) // Acknowledge receipt
+      return new Response('OK', { status: 200 })
     }
 
     const message = value.messages[0]
-    const fromNumber = message.from // Customer's WhatsApp number
+    const fromNumber = message.from
     const incomingText = message.text?.body
 
     if (!incomingText) {
-      return new NextResponse('Not a text message', { status: 200 })
+      return new Response('OK', { status: 200 })
     }
 
     const phoneNumberId = value.metadata?.phone_number_id
 
-    // 3. Look up the Agent in Supabase using the Phone Number ID
+    // Look up the Agent in Supabase
     const { data: agent, error: agentError } = await supabase
       .from('agents')
       .select(`
@@ -73,20 +79,19 @@ export async function POST(request: Request) {
       .eq('whatsapp_phone_id', phoneNumberId)
       .single()
 
-    // Fallback if no agent is found or phone ID isn't set yet
     const agentName = agent?.name || 'Assistant'
     const systemPrompt = agent?.system_prompt || 'You are a helpful assistant.'
     const knowledgeBase = agent?.knowledge_bases?.[0] 
       ? `Website Info: ${agent.knowledge_bases[0].scraped_text || ''}\nManual Info: ${agent.knowledge_bases[0].manual_text || ''}`
       : 'No specific knowledge base provided.'
 
-    // 4. Call OpenAI with the Agent's specific brain
+    // Call OpenAI
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: `You are ${agentName}. ${systemPrompt}\n\nHere is the business information you MUST use to answer:\n${knowledgeBase}\n\nKeep responses concise, friendly, and directly answer the customer's question.`
+          content: `You are ${agentName}. ${systemPrompt}\n\nHere is the business information:\n${knowledgeBase}\n\nKeep responses concise and friendly.`
         },
         {
           role: 'user',
@@ -96,10 +101,9 @@ export async function POST(request: Request) {
     })
 
     const aiResponse = completion.choices[0].message.content || 'Sorry, I could not process that.'
-    console.log('AI Response:', aiResponse)
 
-    // 5. Send the reply back to WhatsApp via Meta API
-    const whatsappToken = agent?.whatsapp_token || process.env.WHATSAPP_TEST_TOKEN // Fallback token
+    // Send reply back to WhatsApp
+    const whatsappToken = agent?.whatsapp_token || process.env.WHATSAPP_TEST_TOKEN
     const replyUrl = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`
 
     await fetch(replyUrl, {
@@ -115,11 +119,10 @@ export async function POST(request: Request) {
       }),
     })
 
-    // Always return 200 OK to Meta so they know we received it
-    return new NextResponse('OK', { status: 200 })
+    return new Response('OK', { status: 200 })
 
   } catch (error) {
     console.error('Webhook error:', error)
-    return new NextResponse('Internal Server Error', { status: 500 })
+    return new Response('Error', { status: 500 })
   }
 }
