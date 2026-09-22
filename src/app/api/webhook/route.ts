@@ -1,46 +1,47 @@
+import { createHash } from "crypto";
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+// Use the environment variable, with a fallback just in case
+const EXPECTED_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "my_saas_secret_1234";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+function fingerprint(value: string | null) {
+  if (value === null) return null;
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
 
 // GET Request: Meta uses this to verify your webhook URL
 export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-    const mode = searchParams.get('hub.mode')
-    const token = searchParams.get('hub.verify_token')
-    const challenge = searchParams.get('hub.challenge')
+  const mode = request.nextUrl.searchParams.get("hub.mode");
+  const token = request.nextUrl.searchParams.get("hub.verify_token");
+  const challenge = request.nextUrl.searchParams.get("hub.challenge");
 
-    console.log('Meta verification:', { mode, token, challenge })
+  console.log("Webhook verification", {
+    mode,
+    tokenPresent: token !== null,
+    tokenLength: token?.length ?? null,
+    expectedLength: EXPECTED_TOKEN.length,
+    tokenFingerprint: fingerprint(token),
+    expectedFingerprint: fingerprint(EXPECTED_TOKEN),
+    hasChallenge: challenge !== null,
+    host: request.headers.get("host"),
+    pathname: request.nextUrl.pathname,
+  })
 
-    if (mode === 'subscribe' && token === 'my_saas_secret_1234') {
-      console.log('✅ Verification successful!')
-      // Return ONLY the challenge string, nothing else
-      return new Response(challenge, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/plain',
-        },
-      })
-    }
-
-    console.log('❌ Verification failed')
-    return new Response('Forbidden', { status: 403 })
-  } catch (error) {
-    console.error('Verification error:', error)
-    return new Response('Error', { status: 500 })
+  if (mode === "subscribe" && token === EXPECTED_TOKEN && challenge !== null) {
+    console.log("✅ Webhook verification succeeded");
+    return new NextResponse(challenge, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
   }
+
+  console.error("❌ Webhook verification failed");
+  return new NextResponse("Forbidden", { status: 403 });
 }
 
+// (Keep your existing POST request code exactly as it was below this)
 // POST Request: Meta sends this when a customer messages your WhatsApp
 export async function POST(request: Request) {
   try {
