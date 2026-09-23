@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+Age: 0
+Cache-Control: public, max-age=0, must-revalidate
+Content-Type: text/plain
+Date: Wed, 23 Sep 2026 11:19:59 GMT
+Server: Vercel
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch
+X-Matched-Path: /api/webhook
+X-Vercel-Cache: MISS
+X-Vercel-Id: bom1::iad1::gh4mc-1790162397984-7c7b4363a54b
+Transfer-Encoding: chunked
+

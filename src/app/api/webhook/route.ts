@@ -51,30 +51,35 @@ export async function GET(request: NextRequest) {
   return new NextResponse('Forbidden', { status: 403 });
 }
 
-// POST Request: Meta sends this when a customer messages your WhatsApp
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    console.log('Webhook received:', JSON.stringify(body, null, 2));
-
-    // Extract data from Meta's complex payload structure
+    
     const entry = body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-    
+
+    // 🚨 Breadcrumb 1: If it's just a status update (double ticks), we log it and stop
     if (!value?.messages) {
+      console.log('⚠️ IGNORED: This was a status update (like double ticks), not a text message.');
       return new NextResponse('OK', { status: 200 });
     }
 
     const message = value.messages[0];
     const fromNumber = message.from;
     const incomingText = message.text?.body;
+    const phoneNumberId = value.metadata?.phone_number_id;
+
+    // 🚨 Breadcrumb 2: We successfully extracted the text!
+    console.log(`✅ REAL MESSAGE! From: ${fromNumber} | Text: "${incomingText}" | PhoneID: ${phoneNumberId}`);
 
     if (!incomingText) {
+      console.log('⚠️ IGNORED: Message has no text body (maybe an image or sticker).');
       return new NextResponse('OK', { status: 200 });
     }
 
-    const phoneNumberId = value.metadata?.phone_number_id;
+    // 👇 KEEP ALL YOUR EXISTING OPENAI AND REPLY CODE BELOW THIS LINE 👇
+    // (Whatever code you have that calls OpenAI and sends the message back to Meta)
 
     // Look up the Agent in Supabase
     const { data: agent, error: agentError } = await supabase
