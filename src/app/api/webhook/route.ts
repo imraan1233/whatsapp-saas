@@ -14,7 +14,7 @@ const openai = new OpenAI({
 });
 
 // Use the environment variable, with a fallback just in case
-const EXPECTED_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'my_saas_secret_1234';
+const EXPECTED_TOKEN = "imraan123";
 
 function fingerprint(value: string | null | undefined) {
   if (!value) return null;
