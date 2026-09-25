@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "WhatsApp AI SaaS",
+  title: "WhatsApp Assiatent",
   description: "AI-powered WhatsApp chatbot",
 };
 

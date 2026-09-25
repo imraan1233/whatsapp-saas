@@ -18,7 +18,7 @@ function SidebarContent({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <div className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-6 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">WhatsApp AI</h1>
+          <h1 className="text-2xl font-bold text-gray-900">WhatsApp Assistent</h1>
         </div>
         
         {/* Language Switcher */}
