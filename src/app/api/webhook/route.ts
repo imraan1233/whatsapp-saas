@@ -14,11 +14,6 @@ const openai = new OpenAI({
 
 const EXPECTED_TOKEN = "imraan123";
 
-function fingerprint(value: string | null | undefined) {
-  if (!value) return null;
-  return createHash('sha256').update(value).digest('hex').slice(0, 12);
-}
-
 export async function GET(request: NextRequest) {
   const mode = request.nextUrl.searchParams.get('hub.mode');
   const token = request.nextUrl.searchParams.get('hub.verify_token');
@@ -47,20 +42,18 @@ export async function POST(request: NextRequest) {
     const whatsappToken = process.env.WHATSAPP_TEST_TOKEN;
 
     let incomingText = '';
-    let messageType = message.type;
+    const messageType = message.type;
 
     // 🎙️ HANDLE VOICE MESSAGES
     if (messageType === 'audio') {
-      console.log('🎙️ Received Voice Note. Transcribing...');
+      console.log('️ Received Voice Note. Transcribing...');
       const mediaId = message.audio.id;
       
-      // 1. Get the media URL from Meta
       const mediaInfoRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
         headers: { 'Authorization': `Bearer ${whatsappToken}` }
       });
       const mediaInfo = await mediaInfoRes.json();
       
-      // 2. Download the actual audio file
       const fileRes = await fetch(mediaInfo.url, {
         headers: { 'Authorization': `Bearer ${whatsappToken}` }
       });
@@ -68,7 +61,6 @@ export async function POST(request: NextRequest) {
       const blob = new Blob([arrayBuffer]);
       const file = new File([blob], "audio.ogg", { type: "audio/ogg" });
 
-      // 3. Transcribe using OpenAI Whisper
       const transcription = await openai.audio.transcriptions.create({
         file: file,
         model: "whisper-1",
@@ -80,9 +72,9 @@ export async function POST(request: NextRequest) {
     else if (messageType === 'text') {
       incomingText = message.text?.body;
     } 
-    // 🖼️ HANDLE IMAGES (We will add this in the next step!)
+    // 🖼️ HANDLE IMAGES
     else if (messageType === 'image') {
-      incomingText = "The user sent an image. (Image analysis coming in the next update!)";
+      incomingText = "The user sent an image. Please describe what you see or ask how you can help them order it.";
     }
 
     if (!incomingText) {
@@ -104,13 +96,31 @@ export async function POST(request: NextRequest) {
       return new NextResponse('OK', { status: 200 });
     }
 
-    // 👇 CALL OPENAI CHAT API 👇
+    // 👇 FETCH KNOWLEDGE BASE (The Missing Piece!) 👇
+    const { data: kb } = await supabase
+      .from('knowledge_bases')
+      .select('manual_text, scraped_text, website_url')
+      .eq('agent_id', agent.id)
+      .single();
+
+    const manualInfo = kb?.manual_text ? `\n\nBusiness Info:\n"${kb.manual_text}"` : '';
+    const websiteInfo = kb?.scraped_text ? `\n\nWebsite Content:\n"${kb.scraped_text}"` : '';
+    const websiteLink = kb?.website_url ? `\n\nOfficial Website URL: ${kb.website_url}` : '';
+
+    // 👇 CALL OPENAI CHAT API WITH FULL CONTEXT 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: `You are ${agent.name}. ${agent.system_prompt}\n\nKeep responses concise, friendly, and helpful.`,
+          content: `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
+
+CRITICAL CONVERSATION RULES FOR WHATSAPP:
+1. Be a friendly Concierge, NOT a search engine.
+2. If a user asks "Do you have [Category]?", DO NOT list every product. Reply: "Yes, we have [Category] products. Are you looking for a specific one?"
+3. ACTION RULE: If the user wants to order, buy, or checkout, YOU MUST provide the link. Say: "Great! You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
+4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). WhatsApp cannot read that. ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com) so it becomes a clickable blue link.
+5. Keep responses short and conversational (under 3 sentences).`,
         },
         { role: 'user', content: incomingText },
       ],
@@ -142,7 +152,7 @@ export async function POST(request: NextRequest) {
     return new NextResponse('OK', { status: 200 });
 
   } catch (error) {
-    console.error('💥 WEBHOOK CRASHED:', error);
+    console.error(' WEBHOOK CRASHED:', error);
     return new NextResponse('Error', { status: 500 });
   }
 }
