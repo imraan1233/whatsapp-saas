@@ -1,43 +1,57 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { message, systemPrompt, agentName, knowledgeBase } = await request.json();
+    const { agentId, message, chatHistory } = await request.json();
 
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: 'OpenAI API key is missing.' }, { status: 500 });
-    }
+    const { data: agent, error } = await supabase.from('agents').select('*').eq('id', agentId).single();
+    if (error || !agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
-    // Build a super-smart system prompt
-    const fullSystemPrompt = `
-      You are ${agentName}, a helpful AI assistant for this business. 
-      
-      Here is the business information you MUST use to answer questions:
-      ${knowledgeBase}
+    // Fetch knowledge base AND the website URL
+    const { data: kb } = await supabase
+      .from('knowledge_bases')
+      .select('manual_text, scraped_text, website_url')
+      .eq('agent_id', agentId)
+      .single();
 
-      General Instructions:
-      ${systemPrompt}
-      
-      If the answer is not in the business information, politely say you don't know and suggest they contact the business directly.
-    `;
+    const manualInfo = kb?.manual_text ? `\n\nBusiness Info provided by owner:\n"${kb.manual_text}"` : '';
+    const websiteInfo = kb?.scraped_text ? `\n\nContent scraped from their website:\n"${kb.scraped_text}"` : '';
+    const websiteLink = kb?.website_url ? `\n\nOfficial Website URL: ${kb.website_url}` : '';
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: fullSystemPrompt },
-        { role: 'user', content: message },
-      ],
-    });
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
 
-    const aiReply = completion.choices[0].message.content;
-    return NextResponse.json({ reply: aiReply });
+CRITICAL CONVERSATION RULES FOR WHATSAPP:
+1. Be a friendly Concierge, NOT a search engine.
+2. If a user asks "Do you have [Category]?", DO NOT list every product. Reply: "Yes, we have [Category] products. Are you looking for a specific one?"
+3. ONLY list specific items if the user explicitly asks for a list.
+4. Keep responses short and conversational (under 3 sentences).
+5. ACTION RULE: If the user wants to order, buy, or checkout, YOU MUST provide the link. 
+6. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). WhatsApp cannot read that. ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com) so it becomes a clickable blue link.
+7. When listing items, use this format: 1/ Item name, 2/ Item name.`,
+      },
+      ...(chatHistory || []),
+      { role: 'user', content: message },
+    ];
+
+    const completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages });
+    return NextResponse.json({ response: completion.choices[0].message.content || 'Sorry, I could not process that.' });
+
   } catch (error) {
-    console.error('OpenAI Error:', error);
-    return NextResponse.json({ error: 'Failed to get AI response.' }, { status: 500 });
+    console.error('💥 Chat API Crashed:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
