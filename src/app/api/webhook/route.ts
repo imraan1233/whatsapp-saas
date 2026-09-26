@@ -36,45 +36,78 @@ export async function POST(request: NextRequest) {
       return new NextResponse('OK', { status: 200 });
     }
 
-    const message = value.messages[0];
-    const fromNumber = message.from;
+    const fromNumber = value.messages[0].from;
     const phoneNumberId = value.metadata?.phone_number_id;
     const whatsappToken = process.env.WHATSAPP_TEST_TOKEN;
 
+    // Process ALL messages (image + text together)
     let incomingText = '';
-    const messageType = message.type;
+    let imageBase64: string | null = null;
+    let imageMimeType = 'image/jpeg';
 
-    // 🎙️ HANDLE VOICE MESSAGES
-    if (messageType === 'audio') {
-      console.log('️ Received Voice Note. Transcribing...');
-      const mediaId = message.audio.id;
-      
-      const mediaInfoRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
-        headers: { 'Authorization': `Bearer ${whatsappToken}` }
-      });
-      const mediaInfo = await mediaInfoRes.json();
-      
-      const fileRes = await fetch(mediaInfo.url, {
-        headers: { 'Authorization': `Bearer ${whatsappToken}` }
-      });
-      const arrayBuffer = await fileRes.arrayBuffer();
-      const blob = new Blob([arrayBuffer]);
-      const file = new File([blob], "audio.ogg", { type: "audio/ogg" });
+    for (const message of value.messages) {
+      const messageType = message.type;
 
-      const transcription = await openai.audio.transcriptions.create({
-        file: file,
-        model: "whisper-1",
+      if (messageType === 'audio') {
+        console.log('🎙️ Received Voice Note. Transcribing...');
+        const mediaId = message.audio.id;
+        
+        const mediaInfoRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+          headers: { 'Authorization': `Bearer ${whatsappToken}` }
+        });
+        const mediaInfo = await mediaInfoRes.json();
+        
+        const fileRes = await fetch(mediaInfo.url, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+        const arrayBuffer = await fileRes.arrayBuffer();
+        const file = new File([new Blob([arrayBuffer])], "audio.ogg", { type: "audio/ogg" });
+
+        const transcription = await openai.audio.transcriptions.create({ file: file, model: "whisper-1" });
+        incomingText += (incomingText ? ' ' : '') + transcription.text;
+        console.log(`✅ Transcribed Voice: "${transcription.text}"`);
+      } 
+      else if (messageType === 'text') {
+        incomingText += (incomingText ? ' ' : '') + message.text?.body;
+      } 
+      else if (messageType === 'image') {
+        console.log('🖼️ Received Image. Analyzing with Vision AI...');
+        const mediaId = message.image.id;
+
+        const mediaInfoRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+          headers: { 'Authorization': `Bearer ${whatsappToken}` }
+        });
+        const mediaInfo = await mediaInfoRes.json();
+
+        const fileRes = await fetch(mediaInfo.url, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+        const arrayBuffer = await fileRes.arrayBuffer();
+        imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+        imageMimeType = mediaInfo.mime_type || 'image/jpeg';
+        console.log('✅ Image downloaded and converted to base64');
+      }
+    }
+
+    // If we have an image, analyze it with Vision AI
+    if (imageBase64) {
+      console.log('️ Analyzing image with GPT-4 Vision...');
+      const visionResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Describe this image in detail. If it shows a product, identify the brand, name, and any visible text. Keep it under 3 sentences." },
+              {
+                type: "image_url",
+                image_url: { url: `data:${imageMimeType};base64,${imageBase64}` },
+              },
+            ],
+          },
+        ],
+        max_tokens: 300,
       });
-      incomingText = transcription.text;
-      console.log(`✅ Transcribed Voice to Text: "${incomingText}"`);
-    } 
-    // 💬 HANDLE TEXT MESSAGES
-    else if (messageType === 'text') {
-      incomingText = message.text?.body;
-    } 
-    // 🖼️ HANDLE IMAGES
-    else if (messageType === 'image') {
-      incomingText = "The user sent an image. Please describe what you see or ask how you can help them order it.";
+
+      const imageDescription = visionResponse.choices[0].message.content;
+      incomingText = `[User sent an image showing: ${imageDescription}] ${incomingText}`;
+      console.log(`✅ Image analyzed: ${imageDescription}`);
     }
 
     if (!incomingText) {
@@ -83,7 +116,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Processing Message from ${fromNumber}: "${incomingText}"`);
 
-    // 👇 FETCH AGENT FROM DATABASE 👇
+    // Fetch Agent
     const { data: agent, error } = await supabase
       .from('agents')
       .select('*')
@@ -96,7 +129,7 @@ export async function POST(request: NextRequest) {
       return new NextResponse('OK', { status: 200 });
     }
 
-    // 👇 FETCH KNOWLEDGE BASE (The Missing Piece!) 👇
+    // Fetch Knowledge Base
     const { data: kb } = await supabase
       .from('knowledge_bases')
       .select('manual_text, scraped_text, website_url')
@@ -107,7 +140,7 @@ export async function POST(request: NextRequest) {
     const websiteInfo = kb?.scraped_text ? `\n\nWebsite Content:\n"${kb.scraped_text}"` : '';
     const websiteLink = kb?.website_url ? `\n\nOfficial Website URL: ${kb.website_url}` : '';
 
-    // 👇 CALL OPENAI CHAT API WITH FULL CONTEXT 
+    // Call OpenAI
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -120,7 +153,8 @@ CRITICAL CONVERSATION RULES FOR WHATSAPP:
 2. If a user asks "Do you have [Category]?", DO NOT list every product. Reply: "Yes, we have [Category] products. Are you looking for a specific one?"
 3. ACTION RULE: If the user wants to order, buy, or checkout, YOU MUST provide the link. Say: "Great! You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
 4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). WhatsApp cannot read that. ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com) so it becomes a clickable blue link.
-5. Keep responses short and conversational (under 3 sentences).`,
+5. Keep responses short and conversational (under 3 sentences).
+6. If the user sent an image of a product, check if you have it in your knowledge base or website, and provide pricing/availability info.`,
         },
         { role: 'user', content: incomingText },
       ],
@@ -128,7 +162,7 @@ CRITICAL CONVERSATION RULES FOR WHATSAPP:
 
     const aiResponse = completion.choices[0].message.content || 'Sorry, I could not process that.';
 
-    // 👇 SEND REPLY TO WHATSAPP 👇
+    // Send Reply
     const replyUrl = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
     const metaResponse = await fetch(replyUrl, {
       method: 'POST',
@@ -152,7 +186,7 @@ CRITICAL CONVERSATION RULES FOR WHATSAPP:
     return new NextResponse('OK', { status: 200 });
 
   } catch (error) {
-    console.error(' WEBHOOK CRASHED:', error);
+    console.error('💥 WEBHOOK CRASHED:', error);
     return new NextResponse('Error', { status: 500 });
   }
 }
