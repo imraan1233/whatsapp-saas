@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Processing Message from ${fromNumber}: "${incomingText}"`);
 
+    // Fetch Agent
     const { data: agent, error } = await supabase
       .from('agents')
       .select('*')
@@ -123,6 +124,14 @@ export async function POST(request: NextRequest) {
       return new NextResponse('OK', { status: 200 });
     }
 
+    // 💾 SAVE USER MESSAGE TO INBOX
+    await supabase.from('inbox_messages').insert({
+      agent_id: agent.id,
+      phone_number: fromNumber,
+      role: 'user',
+      content: incomingText
+    });
+
     const { data: kb } = await supabase
       .from('knowledge_bases')
       .select('manual_text, scraped_text, website_url')
@@ -133,7 +142,6 @@ export async function POST(request: NextRequest) {
     const websiteInfo = kb?.scraped_text ? `\n\nWebsite Content:\n"${kb.scraped_text}"` : '';
     const websiteLink = kb?.website_url ? `\n\nOfficial Website URL: ${kb.website_url}` : '';
 
-    // THE SYSTEM PROMPT WITH THE NEW HANDOFF RULE
     const systemPrompt = `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
 
 CRITICAL CONVERSATION RULES:
@@ -155,8 +163,16 @@ CRITICAL CONVERSATION RULES:
     const aiResponse = completion.choices[0].message.content || 'Sorry, I could not process that.';
     const replyUrl = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
 
+    // 💾 SAVE AI MESSAGE TO INBOX
+    await supabase.from('inbox_messages').insert({
+      agent_id: agent.id,
+      phone_number: fromNumber,
+      role: 'assistant',
+      content: aiResponse
+    });
+
     if (isVoiceInput) {
-      console.log(' Generating Voice Reply...');
+      console.log('🎙️ Generating Voice Reply...');
       
       const mp3 = await openai.audio.speech.create({
         model: "tts-1",
