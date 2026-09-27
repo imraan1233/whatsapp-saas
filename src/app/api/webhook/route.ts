@@ -45,13 +45,12 @@ export async function POST(request: NextRequest) {
     let imageBase64: string | null = null;
     let imageMimeType = 'image/jpeg';
 
-    // Process ALL messages (image + text together)
     for (const message of value.messages) {
       const messageType = message.type;
 
       if (messageType === 'audio') {
         isVoiceInput = true;
-        console.log('🎙️ Received Voice Note. Transcribing...');
+        console.log('️ Received Voice Note. Transcribing...');
         const mediaId = message.audio.id;
         
         const mediaInfoRes = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
@@ -85,7 +84,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // If we have an image, analyze it with Vision AI
     if (imageBase64) {
       console.log('👁️ Analyzing image with GPT-4 Vision...');
       const visionResponse = await openai.chat.completions.create({
@@ -111,7 +109,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Processing Message from ${fromNumber}: "${incomingText}"`);
 
-    // Fetch Agent
     const { data: agent, error } = await supabase
       .from('agents')
       .select('*')
@@ -121,13 +118,11 @@ export async function POST(request: NextRequest) {
 
     if (error || !agent) return new NextResponse('OK', { status: 200 });
 
-    // 🛑 CHECK IF AI IS ACTIVE
     if (!agent.is_ai_active) {
       console.log('⏸️ AI is Paused. Message ignored.');
       return new NextResponse('OK', { status: 200 });
     }
 
-    // Fetch Knowledge Base
     const { data: kb } = await supabase
       .from('knowledge_bases')
       .select('manual_text, scraped_text, website_url')
@@ -138,13 +133,8 @@ export async function POST(request: NextRequest) {
     const websiteInfo = kb?.scraped_text ? `\n\nWebsite Content:\n"${kb.scraped_text}"` : '';
     const websiteLink = kb?.website_url ? `\n\nOfficial Website URL: ${kb.website_url}` : '';
 
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
+    // THE SYSTEM PROMPT WITH THE NEW HANDOFF RULE
+    const systemPrompt = `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
 
 CRITICAL CONVERSATION RULES:
 1. Be a friendly Concierge.
@@ -152,8 +142,12 @@ CRITICAL CONVERSATION RULES:
 3. If the user wants to order, YOU MUST provide the link. Say: "You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
 4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com).
 5. Keep responses short and conversational.
-6. 6. HANDOFF RULE: If the user asks a question that is completely irrelevant to the business, or if you cannot answer after 2 attempts, DO NOT guess. Reply exactly with: "I apologize, but I am not sure about that. Our human representative will contact you shortly to assist you."
-        },
+6. HANDOFF RULE: If the user asks a question that is completely irrelevant to the business, or if you cannot answer, DO NOT guess. Reply exactly with: "I apologize, but I am not sure about that. Our human representative will contact you shortly to assist you."`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: incomingText },
       ],
     });
@@ -161,19 +155,16 @@ CRITICAL CONVERSATION RULES:
     const aiResponse = completion.choices[0].message.content || 'Sorry, I could not process that.';
     const replyUrl = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
 
-    // 🎙️ IF INPUT WAS VOICE, REPLY WITH VOICE (Text-to-Speech)
     if (isVoiceInput) {
       console.log(' Generating Voice Reply...');
       
-      // 1. Generate Audio from OpenAI TTS
       const mp3 = await openai.audio.speech.create({
         model: "tts-1",
-        voice: "nova", // "nova" is a clear, friendly female voice. You can change to "alloy" or "shimmer"
+        voice: "nova",
         input: aiResponse,
       });
       const buffer = Buffer.from(await mp3.arrayBuffer());
 
-      // 2. Upload Audio to WhatsApp Media API
       const formData = new FormData();
       formData.append('file', new Blob([buffer], { type: 'audio/mpeg' }), 'reply.mp3');
       formData.append('messaging_product', 'whatsapp');
@@ -185,7 +176,6 @@ CRITICAL CONVERSATION RULES:
       });
       const uploadData = await uploadRes.json();
 
-      // 3. Send the Audio Message
       if (uploadData.id) {
         await fetch(replyUrl, {
           method: 'POST',
@@ -200,7 +190,6 @@ CRITICAL CONVERSATION RULES:
         console.log('✅ Voice reply sent successfully!');
       }
     } 
-    // 💬 OTHERWISE, REPLY WITH STANDARD TEXT
     else {
       const metaResponse = await fetch(replyUrl, {
         method: 'POST',
@@ -217,7 +206,7 @@ CRITICAL CONVERSATION RULES:
     return new NextResponse('OK', { status: 200 });
 
   } catch (error) {
-    console.error(' WEBHOOK CRASHED:', error);
+    console.error('💥 WEBHOOK CRASHED:', error);
     return new NextResponse('Error', { status: 500 });
   }
 }
