@@ -124,6 +124,14 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
 
+          // 🛑 CHECK IF AI IS ACTIVE
+    if (agent && !agent.is_ai_active) {
+      console.log('️ AI is Paused. Message ignored.');
+      return new NextResponse('OK', { status: 200 }); // Stops the AI from replying!
+    }
+
+      
+
     if (error || !agent) {
       console.error('❌ No agent found!', error);
       return new NextResponse('OK', { status: 200 });

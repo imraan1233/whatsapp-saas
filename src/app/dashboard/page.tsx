@@ -79,7 +79,7 @@ export default function DashboardHome() {
     } else if (newAgent) {
       let scrapedContent = '';
       if (selectedTier === 'enterprise' && websiteUrl) {
-        setLoadingStatus('🕷️ Scraping website content...');
+        setLoadingStatus('️ Scraping website content...');
         try {
           const scrapeRes = await fetch('/api/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: websiteUrl }) });
           const scrapeData = await scrapeRes.json();
@@ -128,6 +128,19 @@ export default function DashboardHome() {
     setIsLoading(false);
   };
 
+  // --- NEW: TOGGLE AI STATUS FUNCTION ---
+  const toggleAiStatus = async (agentId: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    const { error } = await supabase
+      .from('agents')
+      .update({ is_ai_active: newStatus })
+      .eq('id', agentId);
+      
+    if (!error) {
+      fetchAgents(); 
+    }
+  };
+
   const deleteAgent = async (agentId: string) => {
     if (!confirm('Are you sure you want to delete this agent?')) return;
     await supabase.from('knowledge_bases').delete().eq('agent_id', agentId);
@@ -145,7 +158,6 @@ export default function DashboardHome() {
   };
   const closeChat = () => { setChatAgent(null); setChatMessages([]); };
 
-  // --- THIS IS THE SINGLE, CORRECT LINK RENDERER ---
   const renderMessage = (text: string) => {
     if (!text) return null;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -262,11 +274,26 @@ export default function DashboardHome() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {agents.map((agent) => (
               <div key={agent.id} className="p-5 rounded-2xl border border-gray-200 bg-white shadow-sm flex flex-col justify-between relative">
+                
+                {/* NEW: TOGGLE AI BUTTON (Top Left) */}
+                <button 
+                  onClick={() => toggleAiStatus(agent.id, agent.is_ai_active)} 
+                  className={`absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                    agent.is_ai_active 
+                      ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700' 
+                      : 'bg-red-100 text-red-700 hover:bg-green-100 hover:text-green-700'
+                  }`}
+                >
+                  {agent.is_ai_active ? ' AI Active' : '🔴 AI Paused'}
+                </button>
+
+                {/* DELETE BUTTON (Top Right) */}
                 <button onClick={() => deleteAgent(agent.id)} className="absolute top-4 right-4 text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-full transition-all" title="Delete">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 </button>
+
                 <div>
-                  <div className="flex justify-between items-start mb-2 pr-8">
+                  <div className="flex justify-between items-start mb-2 pr-8 pl-20">
                     <h3 className="text-lg font-bold text-gray-900">{agent.name}</h3>
                     <span className={`px-3 py-1 rounded-full text-xs font-bold text-right ${agent.tier === 'starter' ? 'bg-gray-100 text-gray-700' : agent.tier === 'pro' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
                       {agent.tier === 'starter' ? 'AI Agent' : agent.tier === 'pro' ? 'AI Agent + Knowledge Base' : 'AI Agent + Knowledge Base + Website'}
@@ -292,8 +319,6 @@ export default function DashboardHome() {
               <div><h3 className="text-white font-bold text-lg">{chatAgent.name}</h3><p className="text-green-100 text-xs">Online</p></div>
               <button onClick={closeChat} className="text-white hover:bg-white/20 rounded-full p-2">✕</button>
             </div>
-            
-            {/* CHAT MESSAGES WITH RENDER MESSAGE APPLIED */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
               {chatMessages.map((msg, idx) => (
                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -305,7 +330,6 @@ export default function DashboardHome() {
               {isChatLoading && <div className="flex justify-start"><div className="bg-white border border-gray-200 p-3 rounded-2xl rounded-bl-none shadow-sm"><div className="flex space-x-1"><div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div><div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div><div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div></div></div></div>}
               <div ref={chatEndRef} />
             </div>
-
             <form onSubmit={sendMessage} className="p-4 border-t border-gray-200 bg-white rounded-b-2xl flex gap-2">
               <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 py-2 rounded-full border border-gray-300 focus:ring-2 focus:ring-[#25D366] focus:border-transparent outline-none" disabled={isChatLoading} />
               <button type="submit" disabled={isChatLoading || !chatInput.trim()} className="p-2 rounded-full bg-[#25D366] text-white hover:bg-[#20bd5a] disabled:opacity-50"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg></button>
