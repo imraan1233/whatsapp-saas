@@ -40,15 +40,17 @@ export async function POST(request: NextRequest) {
     const phoneNumberId = value.metadata?.phone_number_id;
     const whatsappToken = process.env.WHATSAPP_TEST_TOKEN;
 
-    // Process ALL messages (image + text together)
     let incomingText = '';
+    let isVoiceInput = false;
     let imageBase64: string | null = null;
     let imageMimeType = 'image/jpeg';
 
+    // Process ALL messages (image + text together)
     for (const message of value.messages) {
       const messageType = message.type;
 
       if (messageType === 'audio') {
+        isVoiceInput = true;
         console.log('🎙️ Received Voice Note. Transcribing...');
         const mediaId = message.audio.id;
         
@@ -63,7 +65,6 @@ export async function POST(request: NextRequest) {
 
         const transcription = await openai.audio.transcriptions.create({ file: file, model: "whisper-1" });
         incomingText += (incomingText ? ' ' : '') + transcription.text;
-        console.log(`✅ Transcribed Voice: "${transcription.text}"`);
       } 
       else if (messageType === 'text') {
         incomingText += (incomingText ? ' ' : '') + message.text?.body;
@@ -81,13 +82,12 @@ export async function POST(request: NextRequest) {
         const arrayBuffer = await fileRes.arrayBuffer();
         imageBase64 = Buffer.from(arrayBuffer).toString('base64');
         imageMimeType = mediaInfo.mime_type || 'image/jpeg';
-        console.log('✅ Image downloaded and converted to base64');
       }
     }
 
     // If we have an image, analyze it with Vision AI
     if (imageBase64) {
-      console.log('️ Analyzing image with GPT-4 Vision...');
+      console.log('👁️ Analyzing image with GPT-4 Vision...');
       const visionResponse = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -95,19 +95,14 @@ export async function POST(request: NextRequest) {
             role: "user",
             content: [
               { type: "text", text: "Describe this image in detail. If it shows a product, identify the brand, name, and any visible text. Keep it under 3 sentences." },
-              {
-                type: "image_url",
-                image_url: { url: `data:${imageMimeType};base64,${imageBase64}` },
-              },
+              { type: "image_url", image_url: { url: `data:${imageMimeType};base64,${imageBase64}` } },
             ],
           },
         ],
         max_tokens: 300,
       });
-
       const imageDescription = visionResponse.choices[0].message.content;
       incomingText = `[User sent an image showing: ${imageDescription}] ${incomingText}`;
-      console.log(`✅ Image analyzed: ${imageDescription}`);
     }
 
     if (!incomingText) {
@@ -124,16 +119,11 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
 
-          // 🛑 CHECK IF AI IS ACTIVE
-    if (agent && !agent.is_ai_active) {
-      console.log('️ AI is Paused. Message ignored.');
-      return new NextResponse('OK', { status: 200 }); // Stops the AI from replying!
-    }
+    if (error || !agent) return new NextResponse('OK', { status: 200 });
 
-      
-
-    if (error || !agent) {
-      console.error('❌ No agent found!', error);
+    // 🛑 CHECK IF AI IS ACTIVE
+    if (!agent.is_ai_active) {
+      console.log('⏸️ AI is Paused. Message ignored.');
       return new NextResponse('OK', { status: 200 });
     }
 
@@ -156,45 +146,77 @@ export async function POST(request: NextRequest) {
           role: 'system',
           content: `You are ${agent.name}. ${agent.system_prompt}${manualInfo}${websiteInfo}${websiteLink}
 
-CRITICAL CONVERSATION RULES FOR WHATSAPP:
-1. Be a friendly Concierge, NOT a search engine.
-2. If a user asks "Do you have [Category]?", DO NOT list every product. Reply: "Yes, we have [Category] products. Are you looking for a specific one?"
-3. ACTION RULE: If the user wants to order, buy, or checkout, YOU MUST provide the link. Say: "Great! You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
-4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). WhatsApp cannot read that. ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com) so it becomes a clickable blue link.
-5. Keep responses short and conversational (under 3 sentences).
-6. If the user sent an image of a product, check if you have it in your knowledge base or website, and provide pricing/availability info.`,
+CRITICAL CONVERSATION RULES:
+1. Be a friendly Concierge.
+2. If the user asks for a price and you have it, give the exact price.
+3. If the user wants to order, YOU MUST provide the link. Say: "You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
+4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com).
+5. Keep responses short and conversational.`,
         },
         { role: 'user', content: incomingText },
       ],
     });
 
     const aiResponse = completion.choices[0].message.content || 'Sorry, I could not process that.';
-
-    // Send Reply
     const replyUrl = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
-    const metaResponse = await fetch(replyUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${whatsappToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: fromNumber,
-        text: { body: aiResponse },
-      }),
-    });
 
-    if (!metaResponse.ok) {
-      console.error('❌ Meta rejected the reply!', await metaResponse.json());
-    } else {
-      console.log('✅ Reply sent successfully!');
+    // 🎙️ IF INPUT WAS VOICE, REPLY WITH VOICE (Text-to-Speech)
+    if (isVoiceInput) {
+      console.log(' Generating Voice Reply...');
+      
+      // 1. Generate Audio from OpenAI TTS
+      const mp3 = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova", // "nova" is a clear, friendly female voice. You can change to "alloy" or "shimmer"
+        input: aiResponse,
+      });
+      const buffer = Buffer.from(await mp3.arrayBuffer());
+
+      // 2. Upload Audio to WhatsApp Media API
+      const formData = new FormData();
+      formData.append('file', new Blob([buffer], { type: 'audio/mpeg' }), 'reply.mp3');
+      formData.append('messaging_product', 'whatsapp');
+
+      const uploadRes = await fetch(`https://graph.facebook.com/v18.0/${phoneNumberId}/media`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${whatsappToken}` },
+        body: formData
+      });
+      const uploadData = await uploadRes.json();
+
+      // 3. Send the Audio Message
+      if (uploadData.id) {
+        await fetch(replyUrl, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${whatsappToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: fromNumber,
+            type: 'audio',
+            audio: { id: uploadData.id }
+          })
+        });
+        console.log('✅ Voice reply sent successfully!');
+      }
+    } 
+    // 💬 OTHERWISE, REPLY WITH STANDARD TEXT
+    else {
+      const metaResponse = await fetch(replyUrl, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${whatsappToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: fromNumber,
+          text: { body: aiResponse },
+        }),
+      });
+      if (metaResponse.ok) console.log('✅ Text reply sent successfully!');
     }
 
     return new NextResponse('OK', { status: 200 });
 
   } catch (error) {
-    console.error('💥 WEBHOOK CRASHED:', error);
+    console.error(' WEBHOOK CRASHED:', error);
     return new NextResponse('Error', { status: 500 });
   }
 }
