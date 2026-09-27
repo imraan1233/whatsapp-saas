@@ -151,7 +151,8 @@ CRITICAL CONVERSATION RULES:
 2. If the user asks for a price and you have it, give the exact price.
 3. If the user wants to order, YOU MUST provide the link. Say: "You can place your order directly on our website here: ${kb?.website_url || 'our website'}"
 4. FORMATTING RULE: NEVER use Markdown formatting like [Link](url). ALWAYS output the raw URL (e.g. https://chowhanspharmacy.com).
-5. Keep responses short and conversational.`,
+5. Keep responses short and conversational.
+6. 6. HANDOFF RULE: If the user asks a question that is completely irrelevant to the business, or if you cannot answer after 2 attempts, DO NOT guess. Reply exactly with: "I apologize, but I am not sure about that. Our human representative will contact you shortly to assist you."
         },
         { role: 'user', content: incomingText },
       ],
